@@ -75,18 +75,7 @@ async function streamS3File(res, bucket, key, download = false) {
 
 
 app.get("/staticfiles/pms/:key", async (req, res) => {
-    const key = req.params.key;
-    const paths = [`pms/${key}`, `staticfiles/pms/${key}`, `uploads/${key}`, key];
-    
-    for (const path of paths) {
-        try {
-            await streamS3File(res, process.env.AWS_BUCKET_NAME, path);
-            return;
-        } catch (err) {
-            continue;
-        }
-    }
-    res.status(404).json({ error: "File not found in any S3 path" });
+    await streamS3File(res, process.env.AWS_BUCKET_NAME, `staticfiles/pms/${req.params.key}`);
 });
 
 app.get("/main/:key", async (req, res) => {
