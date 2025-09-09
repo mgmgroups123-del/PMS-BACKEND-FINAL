@@ -27,7 +27,7 @@ uploadRouter.post('/', upload.single("file"), async (req, res) => {
             Bucket: process.env.AWS_BUCKET_NAME,
             Key: "staticfiles/pms/" + file_name,
             Body: file.buffer,
-            ContentType: "Mimetype",
+            ContentType: file.mimetype,
         };
         console.log("came before sending");
 
