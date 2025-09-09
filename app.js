@@ -74,9 +74,7 @@ async function streamS3File(res, bucket, key, download = false) {
 }
 
 
-app.get("/staticfiles/pms/:key", async (req, res) => {
-    await streamS3File(res, process.env.AWS_BUCKET_NAME, `staticfiles/pms/${req.params.key}`);
-});
+app.use('/staticfiles', express.static('uploads'));
 
 app.get("/main/:key", async (req, res) => {
     await streamS3File(res, process.env.AWS_BUCKET_NAME, `main/${req.params.key}`);
