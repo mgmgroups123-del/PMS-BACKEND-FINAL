@@ -4,9 +4,31 @@ services:
     runtime: node
     plan: free
     buildCommand: "npm install"
-    startCommand: "npm run dev"
+    startCommand: "npm start"
     envVars:
       - key: PORT
         value: 3001
       - key: NODE_ENV
         value: production
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_ACCESS_SECRET_KEY
+        sync: false
+      - key: AWS_BUCKET_NAME
+        value: mgmadmin
+      - key: AWS_REGION
+        value: ap-south-1
+      - key: db_user
+        sync: false
+      - key: db_pass
+        sync: false
+      - key: secret_key
+        sync: false
+      - key: db_name
+        value: PMS
+      - key: database_url
+        sync: false
+      - key: enc_secret_key
+        sync: false
+      - key: enc_iv_key
+        sync: false
