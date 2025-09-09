@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: pms-node-backend
+    runtime: node
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "npm run dev"
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: NODE_ENV
+        value: production
