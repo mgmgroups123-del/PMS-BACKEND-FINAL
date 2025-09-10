@@ -18,7 +18,7 @@ export const s3 = new S3Client({
 // Example: list files in the bucket "mgmproperties" inside folder "MGM/"
 export async function listFiles() {
   const command = new ListObjectsV2Command({
-    Bucket: "mgmadmin",
+    Bucket: "mgmpropertiesco",
     Prefix: "MGM/"
   });
 
