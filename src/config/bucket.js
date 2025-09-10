@@ -19,7 +19,7 @@ export const s3 = new S3Client({
 export async function listFiles() {
   const command = new ListObjectsV2Command({
     Bucket: "mgmpropertiesco",
-    Prefix: "MGM/"
+    Prefix: "staticfiles/pms/"
   });
 
   const response = await s3.send(command);
