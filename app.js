@@ -25,6 +25,7 @@ const allowedOrigins = [
     "http://localhost:5173",
     "http://localhost:5174",
     "http://mgmproperties.co.in",
+    "https://mgmproperties.co.in",
 ];
 app.use(
     cors({
