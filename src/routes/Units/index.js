@@ -1,5 +1,5 @@
 import express from "express"
-import { createUnit, deleteUnitByUUID, getAllUnits, getUnitByUUID, getUnitsPropertyId, updateUnitByUUID } from "../../controllers/Units/index.js";
+import { createUnit, deleteUnitByUUID, deleteUnitByID, hardDeleteUnit, getAllUnits, getUnitByUUID, getUnitsPropertyId, updateUnitByUUID } from "../../controllers/Units/index.js";
 import { AuthVerify } from "../../middelware/authverify.js";
 
 const UnitRouter = express.Router();
@@ -9,5 +9,7 @@ UnitRouter.get("/", getAllUnits)
 UnitRouter.get("/get/:id", getUnitsPropertyId)
 UnitRouter.put("/:uuid", updateUnitByUUID)
 UnitRouter.delete("/:uuid",AuthVerify(["owner"]), deleteUnitByUUID)
+UnitRouter.delete("/id/:id",AuthVerify(["owner"]), deleteUnitByID)
+UnitRouter.delete("/hard/:uuid",AuthVerify(["owner"]), hardDeleteUnit)
 
 export default UnitRouter;

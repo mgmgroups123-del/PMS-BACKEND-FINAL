@@ -64,8 +64,7 @@ const TenantsSchema = new Schema({
         type: Number,
     },
     deposit: {
-        type: Number,
-        required: true
+        type: Number
     },
     uuid: {
         type: String,

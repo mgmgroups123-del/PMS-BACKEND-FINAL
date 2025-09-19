@@ -18,7 +18,7 @@ const validateTenantData = (data) => {
 
     // Unit
     // if (!data.unit) errors.push("Unit is required");
-    if (!data.deposit) errors.push("Deposit is required");
+
 
     return errors;
 };
@@ -40,6 +40,25 @@ export const createTenant = async (req, res) => {
 
         const tenant = new TenantModel(req.body);
         await tenant.save();
+
+        // Create rent record immediately for new tenant if due date is soon
+        if (tenant.tenant_type === "rent" && tenant.lease_duration?.due_date) {
+            const today = new Date();
+            const currentMonth = today.getMonth();
+            const currentYear = today.getFullYear();
+            const dueDay = tenant.lease_duration.due_date;
+            const paymentDueDay = new Date(currentYear, currentMonth, dueDay);
+            
+            // If due date is in the past or within next 30 days, create rent record
+            const daysDiff = Math.ceil((paymentDueDay - today) / (1000 * 60 * 60 * 24));
+            if (daysDiff <= 30) {
+                await RentsModel.create({
+                    tenantId: tenant._id,
+                    paymentDueDay: paymentDueDay,
+                    status: "pending"
+                });
+            }
+        }
 
         await ActivityLogModel.create({
             userId: user._id,
@@ -78,6 +97,11 @@ export const getAllTenants = async (req, res) => {
             .skip(skip)
             .limit(parseInt(limit))
             .sort({ createdAt: -1 })
+
+        // Clean up orphaned rent records
+        const allTenantIds = await TenantModel.find({}, '_id')
+        const validTenantIds = allTenantIds.map(t => t._id)
+        await RentsModel.deleteMany({ tenantId: { $nin: validTenantIds } })
 
         const startOfMonth = moment().startOf("month").toDate();
         const endOfMonth = moment().endOf("month").toDate();
@@ -169,11 +193,10 @@ export const deleteTenantByUUID = async (req, res) => {
     try {
         const { uuid } = req.params
         const user = req.user
-        const tenant = await TenantModel.findOneAndUpdate(
-            { uuid: uuid },
-            {is_deleted: true},
-            {new: true}
-        );
+        const tenant = await TenantModel.findOneAndDelete({ uuid: uuid });
+
+        // Delete associated rent records
+        await RentsModel.deleteMany({ tenantId: tenant._id });
 
         await UnitsModel.findByIdAndUpdate({_id: tenant.unit}, {status: "vacant"}, {new: true})
 

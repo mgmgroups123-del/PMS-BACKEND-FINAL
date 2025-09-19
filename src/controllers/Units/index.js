@@ -2,6 +2,7 @@ import { ActivityLogModel } from "../../models/activity_log/index.js";
 import { PropertyModel } from "../../models/Properties/index.js";
 import { UnitsModel } from "../../models/Units/index.js";
 import { sendNotification } from "../../utils/notificationSocket.js";
+import mongoose from "mongoose";
 
 const validateUnitData = (data) => {
     const errors = [];
@@ -25,9 +26,13 @@ export const createUnit = async (req, res) => {
 
         console.log("Units Payload", req.body)
 
-        const existingUnit = await UnitsModel.findOne({ unit_name: req.body.unit_name })
+        const existingUnit = await UnitsModel.findOne({ 
+            unit_name: req.body.unit_name, 
+            propertyId: req.body.propertyId,
+            is_deleted: false 
+        })
         if (existingUnit) {
-            return res.status(400).json({ message: "Unit name already exists" })
+            return res.status(400).json({ message: "Unit name already exists in this property" })
         }
 
         const property = await PropertyModel.findOne({ _id: req.body.propertyId })
@@ -159,8 +164,39 @@ export const deleteUnitByUUID = async (req, res) => {
     try {
         const { uuid } = req.params
         const user = req.user
-        const unit = await UnitsModel.findOneAndUpdate(
-            { uuid: uuid },
+        
+        // Try UUID first, then ObjectId - HARD DELETE
+        let unit = await UnitsModel.findOneAndDelete({ uuid: uuid });
+        
+        if (!unit && mongoose.Types.ObjectId.isValid(uuid)) {
+            unit = await UnitsModel.findByIdAndDelete(uuid);
+        }
+
+        if (!unit) {
+            return res.status(404).json({ success: false, message: "Unit not found" });
+        }
+
+        await ActivityLogModel.create({
+            userId: user._id,
+            title: 'hard delete for unit',
+            details: `${user.first_name} permanently deleted unit ${unit._id}`,
+            action: 'Delete',
+            activity_type: 'unit'
+        })
+
+        return res.status(200).json({ success: true, message: "Unit permanently deleted" });
+    } catch (error) {
+        console.error("Delete Unit Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const deleteUnitByID = async (req, res) => {
+    try {
+        const { id } = req.params
+        const user = req.user
+        const unit = await UnitsModel.findByIdAndUpdate(
+            id,
             { is_deleted: true },
             { new: true }
         );
@@ -177,17 +213,31 @@ export const deleteUnitByUUID = async (req, res) => {
             activity_type: 'unit'
         })
 
-        await sendNotification({
-            userIds: ["68bbf79c6fdf3d22f86710c1", "68bc38c3027d23d88e0dff8e"],
-            title: `Unit Removed`,
-            description: `Unit ${unit?.unit_name} was deleted by ${user?.first_name + " " + user?.last_name}`,
-            notifyType: 'unit',
-            action: 'delete'
-        })
-
         return res.status(200).json({ success: true, message: "Unit deleted successfully" });
     } catch (error) {
         console.error("Delete Unit Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const hardDeleteUnit = async (req, res) => {
+    try {
+        const { uuid } = req.params
+        const user = req.user
+        
+        let unit = await UnitsModel.findOneAndDelete({ uuid: uuid });
+        
+        if (!unit && mongoose.Types.ObjectId.isValid(uuid)) {
+            unit = await UnitsModel.findByIdAndDelete(uuid);
+        }
+
+        if (!unit) {
+            return res.status(404).json({ success: false, message: "Unit not found" });
+        }
+
+        return res.status(200).json({ success: true, message: "Unit permanently deleted" });
+    } catch (error) {
+        console.error("Hard Delete Unit Error:", error);
         return res.status(500).json({ success: false, message: error.message });
     }
 };

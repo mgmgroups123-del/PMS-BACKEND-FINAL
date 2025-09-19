@@ -45,23 +45,22 @@ cron.schedule("0 0 * * *", async () => {
                 }
             }
 
-            if (todayDate !== creationDay) continue; // skip if today is not the creation day
-
             // Check if rent already exists for this tenant for this due month/year
+            const paymentDueDay = new Date(rentYear, rentMonth, dueDay);
             const existingRent = await RentsModel.findOne({
                 tenantId: tenant._id,
-                paymentDueDay: {
-                    $gte: new Date(rentYear, rentMonth, 1),
-                    $lte: new Date(rentYear, rentMonth, 31)
-                }
+                paymentDueDay: paymentDueDay
             });
             if (existingRent) continue; // skip if rent already created
+            
+            // Create rent if we're within 5 days of due date or past due date
+            const daysDiff = Math.ceil((paymentDueDay - today) / (1000 * 60 * 60 * 24));
+            if (daysDiff > 5) continue; // skip if more than 5 days before due date
 
             const unitDetails = await UnitsModel.findById(tenant.unit);
             if (!unitDetails) continue;
 
-            // Set actual rent due date
-            const paymentDueDay = new Date(rentYear, rentMonth, dueDay);
+
 
             const Rent = await RentsModel.create({
                 tenantId: tenant._id,
@@ -108,7 +107,7 @@ export const getRents = async (req, res) => {
         const endDate = new Date(year, month, 0, 23, 59, 59);
 
         const rents = await RentsModel.find({
-            createdAt: { $gte: startDate, $lte: endDate },
+            paymentDueDay: { $gte: startDate, $lte: endDate },
             is_deleted: false
         }).populate({ path: "tenantId", model: "tenant", populate: { path: "unit", model: "unit" } });
 
@@ -314,11 +313,12 @@ export const downloadRentPDF = async (req, res) => {
         // === Dynamic Invoice Calculations ===
         const basicRent = Number(rent.tenantId.financial_information.rent)
         const maintenance = Number(rent.tenantId.financial_information?.maintenance)
-        const cgst = basicRent * 0.09;
-        const sgst = basicRent * 0.09;
-        const subtotal = basicRent + cgst + sgst;
-        const discount = subtotal * 0.10;
-        const total = subtotal - discount + maintenance;
+        const subtotalBeforeGST = basicRent + maintenance;
+        const cgst = subtotalBeforeGST * 0.09;
+        const sgst = subtotalBeforeGST * 0.09;
+        const tds = subtotalBeforeGST * 0.10;
+        const subtotal = subtotalBeforeGST + cgst + sgst;
+        const total = subtotalBeforeGST - tds;
 
         // === PDF SETUP ===
         const doc = new PDFDocument({ size: "A4", margin: 40 });
@@ -386,8 +386,11 @@ export const downloadRentPDF = async (req, res) => {
         const rows = [
             ["1", "Basic Rent", basicRent.toFixed(2), basicRent.toFixed(2)],
             ["2", "Maintenance Charges", maintenance.toFixed(2), maintenance.toFixed(2)],
-            ["3", "CGST (9%)", cgst.toFixed(2), cgst.toFixed(2)],
-            ["4", "SGST (9%)", sgst.toFixed(2), sgst.toFixed(2)],
+            ["3", "Subtotal Before GST", subtotalBeforeGST.toFixed(2), subtotalBeforeGST.toFixed(2)],
+            ["4", "CGST @9%", cgst.toFixed(2), cgst.toFixed(2)],
+            ["5", "SGST @9%", sgst.toFixed(2), sgst.toFixed(2)],
+            ["6", "Subtotal (incl. GST)", subtotal.toFixed(2), subtotal.toFixed(2)],
+            ["7", "TDS @10%", `-${tds.toFixed(2)}`, `-${tds.toFixed(2)}`],
         ];
 
         rows.forEach((row, i) => {
@@ -486,14 +489,14 @@ export const downloadRentExcel = async (req, res) => {
             { header: "Tenant Name", key: "tenant_name", width: 25 },
             { header: "Property", key: "property_name", width: 25 },
             { header: "Unit", key: "unit_name", width: 15 },
-            { header: "Monthly Rent", key: "rent", width: 15 },
-            { header: "Deposit", key: "deposit", width: 15 },
+            { header: "Basic Rent", key: "rent", width: 15 },
             { header: "Maintenance", key: "maintenance", width: 15 },
-            { header: "Subtotal", key: "subtotal", width: 15 },
-            { header: "CGST", key: "cgst", width: 10 },
-            { header: "SGST", key: "sgst", width: 10 },
-            { header: "TDS", key: "tds", width: 10 },
-            { header: "Total", key: "total", width: 15 },
+            { header: "Subtotal Before GST", key: "subtotalBeforeGST", width: 18 },
+            { header: "CGST @9%", key: "cgst", width: 12 },
+            { header: "SGST @9%", key: "sgst", width: 12 },
+            { header: "Subtotal (incl. GST)", key: "subtotal", width: 18 },
+            { header: "TDS @10%", key: "tds", width: 12 },
+            { header: "Total After TDS", key: "total", width: 15 },
         ];
 
         // 4. Add rows
@@ -505,18 +508,12 @@ export const downloadRentExcel = async (req, res) => {
             const monthlyRent = Number(financial.rent) || 0;
             const maintenance = Number(financial.maintenance) || 0;
 
-            // CGST & SGST on basic rent only (not maintenance)
-            const cgst = monthlyRent * 0.09;
-            const sgst = monthlyRent * 0.09;
-
-            // subtotal before discount = basic rent + taxes
-            const subtotal = monthlyRent + cgst + sgst;
-
-            // 10% discount on subtotal
-            const tds = subtotal * 0.10;
-
-            // final total = subtotal after discount + maintenance
-            const total = subtotal - tds + maintenance;
+            const basicRent = monthlyRent;
+            const simpleTotal = basicRent + maintenance;
+            const gst = simpleTotal * 0.18;
+            const totalWithGST = simpleTotal + gst;
+            const tds = simpleTotal * 0.10;
+            const totalWithTDS = simpleTotal - tds;
 
             console.log("Total Rent:", total);
 
@@ -527,11 +524,11 @@ export const downloadRentExcel = async (req, res) => {
                 property_name: rent.unit?.propertyId?.property_name || rent?.unit?.land_name,
                 unit_name: rent.unit?.unit_name || rent?.unit?.land_name,
                 rent: monthlyRent,
-                deposit: rent?.deposit,
                 maintenance,
-                subtotal,
+                subtotalBeforeGST,
                 cgst,
                 sgst,
+                subtotal,
                 tds,
                 total,
             });
@@ -603,12 +600,11 @@ export const downloadAllRentPDF = async (req, res) => {
         // 4. Table header
         const headers = [
             "S.No", "Tenant Type", "Tenant Name", "Property", "Unit",
-            "Monthly Rent", "Deposit", "Maintenance", "Subtotal",
-            "CGST", "SGST", "TDS", "Total"
+            "Basic Rent", "Maintenance", "Subtotal Before GST", "CGST @9%", "SGST @9%", "Subtotal (incl. GST)", "TDS @10%", "Total After TDS"
         ];
 
         // Adjust column widths (first one for serial number)
-        const columnWidths = [40, 70, 70, 100, 60, 70, 70, 70, 70, 50, 50, 50, 70];
+        const columnWidths = [30, 50, 60, 80, 50, 60, 60, 70, 50, 50, 70, 50, 60];
 
         let tableTopY = doc.y; // top Y for header
         let rowHeight = 20;
@@ -644,21 +640,15 @@ export const downloadAllRentPDF = async (req, res) => {
 
             const financial = rent.financial_information || {};
             const monthlyRent = Number(financial.rent) || 0;
-            const deposit = Number(rent.deposit) || 0;
+
             const maintenance = Number(financial.maintenance) || 0;
 
-            // Calculate taxes on basic rent only
-            const cgst = financial.cgst > 0 ? monthlyRent * 0.09 : 0;
-            const sgst = financial.sgst > 0 ? monthlyRent * 0.09 : 0;
-
-            // Subtotal = basic rent + taxes
-            const subtotal = monthlyRent + cgst + sgst;
-
-            // TDS / discount = 10% of subtotal
-            const tds = financial.cgst > 0 && financial.sgst > 0 ? subtotal * 0.10 : 0;
-
-            // Final total = subtotal - tds + maintenance
-            const total = subtotal - tds + maintenance;
+            const basicRent = monthlyRent;
+            const simpleTotal = basicRent + maintenance;
+            const gst = simpleTotal * 0.18;
+            const totalWithGST = simpleTotal + gst;
+            const tds = simpleTotal * 0.10;
+            const totalWithTDS = simpleTotal - tds;
 
             console.log("Total Rent:", total);
 
@@ -670,11 +660,11 @@ export const downloadAllRentPDF = async (req, res) => {
                 rent.unit?.propertyId?.property_name || rent?.unit?.land_name,
                 rent.unit?.unit_name || rent?.unit?.land_name,
                 monthlyRent.toFixed(2),
-                deposit.toFixed(2),
                 maintenance.toFixed(2),
-                subtotal.toFixed(2),
+                subtotalBeforeGST.toFixed(2),
                 cgst.toFixed(2),
                 sgst.toFixed(2),
+                subtotal.toFixed(2),
                 tds.toFixed(2),
                 total.toFixed(2)
             ];
