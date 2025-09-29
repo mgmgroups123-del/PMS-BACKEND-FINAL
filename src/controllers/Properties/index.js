@@ -71,20 +71,15 @@ export const createProperty = async (req, res) => {
 export const getAllProperties = async (req, res) => {
     try {
         const {
-            page = 1,
-            limit = 10,
         } = req.query;
 
         const filters = { is_deleted: false };
 
-        const skip = (parseInt(page) - 1) * parseInt(limit);
         const total = await PropertyModel.countDocuments(filters);
 
         const properties = await PropertyModel.aggregate([
             { $match: filters },
             { $sort: { createdAt: -1 } },
-            { $skip: skip },
-            { $limit: parseInt(limit) },
 
             // lookup units
             {
@@ -195,8 +190,6 @@ export const getAllProperties = async (req, res) => {
 
         return res.status(200).json({
             success: true,
-            page: parseInt(page),
-            totalPages: Math.ceil(total / limit),
             totalRecords: total,
             data: properties
         });
