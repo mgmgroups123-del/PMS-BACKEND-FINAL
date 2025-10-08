@@ -293,7 +293,7 @@ export const downloadRentPDF = async (req, res) => {
     try {
         const { uuid } = req.params;
 
-        // Fetch rent details with tenant, unit, and property
+        // Fetch rent details
         const rent = await RentsModel.findOne({ uuid, is_deleted: false })
             .populate({
                 path: "tenantId",
@@ -311,16 +311,26 @@ export const downloadRentPDF = async (req, res) => {
 
         const logopath = path.join(process.cwd(), "public", "MGM_Logo.png");
 
-        // === Dynamic Invoice Calculations ===
         const basicRent = Number(rent.tenantId.financial_information?.rent) || 0;
         const maintenance = Number(rent.tenantId.financial_information?.maintenance) || 0;
-
         const subtotalBeforeGST = basicRent + maintenance;
-        const cgst = subtotalBeforeGST * 0.09;
-        const sgst = subtotalBeforeGST * 0.09;
-        const subtotalWithGST = subtotalBeforeGST + cgst + sgst;
-        const tds = subtotalWithGST * 0.10;
-        const total = subtotalWithGST - tds;
+
+        // Check if GST/TDS should be applied
+        const propertyType = rent.tenantId.unit.propertyId?.property_type;
+        const tenantType = rent.tenantId.tenant_type;
+
+        console.log("Property Type:", propertyType);
+        console.log("Tenant Type:", tenantType);
+
+        let cgst = 0, sgst = 0, subtotalWithGST = subtotalBeforeGST, tds = 0, total = subtotalBeforeGST;
+
+        if (!(propertyType === "residency" || tenantType === "lease")) {
+            cgst = subtotalBeforeGST * 0.09;
+            sgst = subtotalBeforeGST * 0.09;
+            subtotalWithGST = subtotalBeforeGST + cgst + sgst;
+            tds = subtotalWithGST * 0.10;
+            total = subtotalWithGST - tds;
+        }
 
         // === PDF Setup ===
         const doc = new PDFDocument({ size: "A4", margin: 40 });
@@ -328,17 +338,15 @@ export const downloadRentPDF = async (req, res) => {
         res.setHeader("Content-Disposition", `attachment; filename=${rent.uuid}.pdf`);
         doc.pipe(res);
 
-        // Logo
+        // Logo & Title
         doc.image(logopath, 10, 15, { width: 130, height: 70 });
-
-        // Title
         doc.fontSize(14).font("Helvetica-Bold").text("INVOICE", { align: "center" });
 
         // Owner Details
         let y = 100;
         doc.fontSize(10).font("Helvetica-Bold").text("Owner Details:", 40, y);
         y += 15;
-        const property = rent.tenantId?.unit?.propertyId;
+        const property = rent.tenantId.unit.propertyId;
         doc.font("Helvetica").text(property?.owner_information?.full_name || "MGM ENTERTAINMENTS PVT LTD", 40, y);
         y += 12;
         doc.text(property?.property_address || "NO 1, 9TH STREET, DR RK SALAI, CHENNAI 4", 40, y);
@@ -380,21 +388,32 @@ export const downloadRentPDF = async (req, res) => {
 
         // Rent Table
         let tableTop = 230;
-        const colWidths = [50, 250, 120, 100];
+        const colWidths = propertyType === "residency" && tenantType === "lease"
+            ? [50, 250, 120] // Only Sl No, Particulars, Amount
+            : [50, 250, 120, 100]; // Include Total column for GST/TDS
 
         // Header
-        drawTableRow(tableTop, ["Sl No.", "Particulars", "Amount", "Total"], colWidths, true);
+        const headers = propertyType === "residency" && tenantType === "lease"
+            ? ["Sl No.", "Particulars", "Amount"]
+            : ["Sl No.", "Particulars", "Amount", "Total"];
+        drawTableRow(tableTop, headers, colWidths, true);
 
         // Rows
-        const rows = [
-            ["1", "Basic Rent", basicRent.toFixed(2), basicRent.toFixed(2)],
-            ["2", "Maintenance Charges", maintenance.toFixed(2), maintenance.toFixed(2)],
-            ["3", "Subtotal Before GST", subtotalBeforeGST.toFixed(2), subtotalBeforeGST.toFixed(2)],
-            ["4", "CGST @9%", cgst.toFixed(2), cgst.toFixed(2)],
-            ["5", "SGST @9%", sgst.toFixed(2), sgst.toFixed(2)],
-            ["6", "Subtotal (incl. GST)", subtotalWithGST.toFixed(2), subtotalWithGST.toFixed(2)],
-            ["7", "TDS @10%", `-${tds.toFixed(2)}`, `-${tds.toFixed(2)}`],
-        ];
+        const rows = propertyType === "residency" && tenantType === "lease"
+            ? [
+                ["1", "Basic Rent", basicRent.toFixed(2)],
+                ["2", "Maintenance Charges", maintenance.toFixed(2)],
+                ["3", "Subtotal", subtotalBeforeGST.toFixed(2)],
+            ]
+            : [
+                ["1", "Basic Rent", basicRent.toFixed(2), basicRent.toFixed(2)],
+                ["2", "Maintenance Charges", maintenance.toFixed(2), maintenance.toFixed(2)],
+                ["3", "Subtotal Before GST", subtotalBeforeGST.toFixed(2), subtotalBeforeGST.toFixed(2)],
+                ["4", "CGST @9%", cgst.toFixed(2), cgst.toFixed(2)],
+                ["5", "SGST @9%", sgst.toFixed(2), sgst.toFixed(2)],
+                ["6", "Subtotal (incl. GST)", subtotalWithGST.toFixed(2), subtotalWithGST.toFixed(2)],
+                ["7", "TDS @10%", `-${tds.toFixed(2)}`, `-${tds.toFixed(2)}`],
+            ];
 
         rows.forEach((row) => {
             tableTop += 20;
@@ -403,10 +422,17 @@ export const downloadRentPDF = async (req, res) => {
 
         // Total Row
         tableTop += 20;
-        doc.rect(40, tableTop, colWidths[0] + colWidths[1] + colWidths[2], 20).stroke();
-        doc.font("Helvetica-Bold").text("Grand Total", 45, tableTop + 6);
-        doc.rect(40 + colWidths[0] + colWidths[1] + colWidths[2], tableTop, colWidths[3], 20).stroke();
-        doc.font("Helvetica-Bold").text(total.toFixed(2), 40 + colWidths[0] + colWidths[1] + colWidths[2] + 5, tableTop + 6);
+        if (propertyType === "residency" && tenantType === "lease") {
+            doc.rect(40, tableTop, colWidths[0] + colWidths[1], 20).stroke();
+            doc.font("Helvetica-Bold").text("Grand Total", 45, tableTop + 6);
+            doc.rect(40 + colWidths[0] + colWidths[1], tableTop, colWidths[2], 20).stroke();
+            doc.font("Helvetica-Bold").text(total.toFixed(2), 40 + colWidths[0] + colWidths[1] + 5, tableTop + 6);
+        } else {
+            doc.rect(40, tableTop, colWidths[0] + colWidths[1] + colWidths[2], 20).stroke();
+            doc.font("Helvetica-Bold").text("Grand Total", 45, tableTop + 6);
+            doc.rect(40 + colWidths[0] + colWidths[1] + colWidths[2], tableTop, colWidths[3], 20).stroke();
+            doc.font("Helvetica-Bold").text(total.toFixed(2), 40 + colWidths[0] + colWidths[1] + colWidths[2] + 5, tableTop + 6);
+        }
 
         // Amount in Words
         tableTop += 40;
@@ -430,6 +456,7 @@ export const downloadRentPDF = async (req, res) => {
         }
     }
 };
+
 
 
 // === Helper to convert numbers to words ===
@@ -460,7 +487,7 @@ function numberToWords(num) {
 
 export const downloadRentExcel = async (req, res) => {
     try {
-        // 1. Fetch all rents with tenant & property info
+        // 1. Fetch all tenants with unit & property info
         const tenants = await TenantModel.find({ is_deleted: false })
             .populate({
                 path: "unit",
@@ -475,8 +502,8 @@ export const downloadRentExcel = async (req, res) => {
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet("Tenant Rent Report");
 
-        // 3. Define columns
-        worksheet.columns = [
+        // 3. Define base columns
+        let columns = [
             { header: "S.No", key: "sno", width: 8 },
             { header: "Tenant Type", key: "tenant_type", width: 15 },
             { header: "Tenant Name", key: "tenant_name", width: 25 },
@@ -484,13 +511,19 @@ export const downloadRentExcel = async (req, res) => {
             { header: "Unit", key: "unit_name", width: 15 },
             { header: "Basic Rent", key: "rent", width: 15 },
             { header: "Maintenance", key: "maintenance", width: 15 },
+        ];
+
+        // Add GST/TDS columns
+        columns.push(
             { header: "Subtotal Before GST", key: "subtotalBeforeGST", width: 20 },
             { header: "CGST @9%", key: "cgst", width: 15 },
             { header: "SGST @9%", key: "sgst", width: 15 },
             { header: "Subtotal (incl. GST)", key: "subtotal", width: 22 },
             { header: "TDS @10%", key: "tds", width: 15 },
-            { header: "Total After TDS", key: "total", width: 20 },
-        ];
+            { header: "Total After TDS", key: "total", width: 20 }
+        );
+
+        worksheet.columns = columns;
 
         // 4. Add rows
         tenants.forEach((tenant, index) => {
@@ -500,15 +533,19 @@ export const downloadRentExcel = async (req, res) => {
             const basicRent = Number(financial.rent) || 0;
             const maintenance = Number(financial.maintenance) || 0;
 
-            // 📊 Same calculation logic as PDF
+            const propertyType = tenant.unit?.propertyId?.property_type;
+            const tenantType = tenant.tenant_type;
+
+            const skipGST = propertyType === "residency" || tenantType === "lease";
             const subtotalBeforeGST = basicRent + maintenance;
-            const cgst = subtotalBeforeGST * 0.09;
-            const sgst = subtotalBeforeGST * 0.09;
-            const subtotal = subtotalBeforeGST + cgst + sgst;
-            const tds = subtotal * 0.10;
+            const cgst = skipGST ? 0 : subtotalBeforeGST * 0.09;
+            const sgst = skipGST ? 0 : subtotalBeforeGST * 0.09;
+            const subtotal = skipGST ? subtotalBeforeGST : subtotalBeforeGST + cgst + sgst;
+            const tds = skipGST ? 0 : subtotal * 0.10;
             const total = subtotal - tds;
 
-            worksheet.addRow({
+
+            const rowData = {
                 sno: index + 1,
                 tenant_type: tenant.tenant_type || "",
                 tenant_name: tenant.personal_information?.full_name || "",
@@ -516,13 +553,15 @@ export const downloadRentExcel = async (req, res) => {
                 unit_name: tenant.unit?.unit_name || tenant.unit?.land_name || "",
                 rent: basicRent,
                 maintenance,
-                subtotalBeforeGST,
-                cgst,
-                sgst,
-                subtotal,
-                tds,
-                total,
-            });
+                subtotalBeforeGST: skipGST ? "" : subtotalBeforeGST,
+                cgst: skipGST ? 0 : cgst,
+                sgst: skipGST ? 0 : sgst,
+                subtotal: subtotal,
+                tds: skipGST ? 0 : tds,
+                total: total,
+            };
+
+            worksheet.addRow(rowData);
         });
 
         // 5. Style header
@@ -531,7 +570,7 @@ export const downloadRentExcel = async (req, res) => {
         headerRow.alignment = { vertical: "middle", horizontal: "center" };
         headerRow.height = 20;
 
-        // Optional: format numbers to 2 decimal places
+        // Format numbers to 2 decimal places
         worksheet.eachRow((row, rowNumber) => {
             if (rowNumber > 1) {
                 [6, 7, 8, 9, 10, 11, 12, 13].forEach((col) => {
@@ -552,6 +591,7 @@ export const downloadRentExcel = async (req, res) => {
 
         await workbook.xlsx.write(res);
         res.end();
+
     } catch (err) {
         console.error(err);
         if (!res.headersSent) {
@@ -559,6 +599,7 @@ export const downloadRentExcel = async (req, res) => {
         }
     }
 };
+
 
 
 export const downloadAllRentPDF = async (req, res) => {
@@ -634,11 +675,16 @@ export const downloadAllRentPDF = async (req, res) => {
             const basicRent = Number(financial.rent) || 0;
             const maintenance = Number(financial.maintenance) || 0;
 
+            const propertyType = tenant.unit?.propertyId?.property_type;
+            const tenantType = tenant.tenant_type;
+
+            const skipGST = propertyType === "residency" || tenantType === "lease";
+
             const subtotalBeforeGST = basicRent + maintenance;
-            const cgst = subtotalBeforeGST * 0.09;
-            const sgst = subtotalBeforeGST * 0.09;
-            const subtotal = subtotalBeforeGST + cgst + sgst;
-            const tds = subtotal * 0.10;
+            const cgst = skipGST ? 0 : subtotalBeforeGST * 0.09;
+            const sgst = skipGST ? 0 :subtotalBeforeGST * 0.09;
+            const subtotal = skipGST ? subtotalBeforeGST : subtotalBeforeGST + cgst + sgst;
+            const tds = skipGST ? 0 : subtotal * 0.10;
             const total = subtotal - tds;
 
             const row = [
