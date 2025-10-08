@@ -416,17 +416,8 @@ export const downloadRentPDF = async (req, res) => {
         doc.font("Helvetica-Bold").text("For MGM ENTERTAINMENTS PVT LTD", 380, tableTop);
         doc.font("Helvetica").text("Authorized Signatory", 430, tableTop + 15);
 
-        // === Bank details box ===
-        const bankTop = tableTop + 60;
-        doc.rect(40, bankTop, 520, 80).stroke();
-        doc.font("Helvetica-Bold").text("BANK DETAILS", 50, bankTop + 10);
-        doc.font("Helvetica").text("Bank: AXIS BANK LTD", 50, bankTop + 25);
-        doc.text("Branch: R.K.Salai, Chennai", 50, bankTop + 38);
-        doc.text("A/C No: 006010200030117", 50, bankTop + 51);
-        doc.text("IFSC: UTIB0000006", 50, bankTop + 64);
-
         // Footer
-        doc.fontSize(8).text("This is a computer-generated invoice", 200, bankTop + 100);
+        doc.fontSize(8).text("This is a computer-generated invoice", 200, tableTop + 100);
 
         doc.end();
     } catch (err) {
@@ -491,11 +482,6 @@ export const downloadRentExcel = async (req, res) => {
             { header: "Unit", key: "unit_name", width: 15 },
             { header: "Basic Rent", key: "rent", width: 15 },
             { header: "Maintenance", key: "maintenance", width: 15 },
-            { header: "Subtotal Before GST", key: "subtotalBeforeGST", width: 18 },
-            { header: "CGST @9%", key: "cgst", width: 12 },
-            { header: "SGST @9%", key: "sgst", width: 12 },
-            { header: "Subtotal (incl. GST)", key: "subtotal", width: 18 },
-            { header: "TDS @10%", key: "tds", width: 12 },
             { header: "Total After TDS", key: "total", width: 15 },
         ];
 
@@ -509,27 +495,15 @@ export const downloadRentExcel = async (req, res) => {
             const maintenance = Number(financial.maintenance) || 0;
 
             const basicRent = monthlyRent;
-            const simpleTotal = basicRent + maintenance;
-            const gst = simpleTotal * 0.18;
-            const totalWithGST = simpleTotal + gst;
-            const tds = simpleTotal * 0.10;
-            const totalWithTDS = simpleTotal - tds;
-
-            console.log("Total Rent:", total);
-
+            const total = basicRent + maintenance;
 
             worksheet.addRow({
                 tenant_type: rent.tenant_type || "",
                 tenant_name: rent.personal_information?.full_name || "",
                 property_name: rent.unit?.propertyId?.property_name || rent?.unit?.land_name,
                 unit_name: rent.unit?.unit_name || rent?.unit?.land_name,
-                rent: monthlyRent,
+                rent: basicRent,
                 maintenance,
-                subtotalBeforeGST,
-                cgst,
-                sgst,
-                subtotal,
-                tds,
                 total,
             });
         });
@@ -600,11 +574,11 @@ export const downloadAllRentPDF = async (req, res) => {
         // 4. Table header
         const headers = [
             "S.No", "Tenant Type", "Tenant Name", "Property", "Unit",
-            "Basic Rent", "Maintenance", "Subtotal Before GST", "CGST @9%", "SGST @9%", "Subtotal (incl. GST)", "TDS @10%", "Total After TDS"
+            "Basic Rent", "Maintenance",  "Total"
         ];
 
         // Adjust column widths (first one for serial number)
-        const columnWidths = [30, 50, 60, 80, 50, 60, 60, 70, 50, 50, 70, 50, 60];
+        const columnWidths = [30, 50, 120, 120, 80, 150, 120, 160];
 
         let tableTopY = doc.y; // top Y for header
         let rowHeight = 20;
@@ -626,7 +600,7 @@ export const downloadAllRentPDF = async (req, res) => {
         };
 
         // Draw header row
-        let startX = 0.5;
+        let startX = 5;
         headers.forEach((header, i) => {
             drawCell(header, startX, tableTopY, columnWidths[i], rowHeight, true);
             startX += columnWidths[i];
@@ -645,13 +619,6 @@ export const downloadAllRentPDF = async (req, res) => {
 
             const basicRent = monthlyRent;
             const simpleTotal = basicRent + maintenance;
-            const gst = simpleTotal * 0.18;
-            const totalWithGST = simpleTotal + gst;
-            const tds = simpleTotal * 0.10;
-            const totalWithTDS = simpleTotal - tds;
-
-            console.log("Total Rent:", total);
-
 
             const row = [
                 (index + 1).toString(), // Serial number
@@ -661,15 +628,10 @@ export const downloadAllRentPDF = async (req, res) => {
                 rent.unit?.unit_name || rent?.unit?.land_name,
                 monthlyRent.toFixed(2),
                 maintenance.toFixed(2),
-                subtotalBeforeGST.toFixed(2),
-                cgst.toFixed(2),
-                sgst.toFixed(2),
-                subtotal.toFixed(2),
-                tds.toFixed(2),
-                total.toFixed(2)
+                simpleTotal.toFixed(2)
             ];
 
-            let rowX = 0.5;
+            let rowX = 5;
 
             row.forEach((col, i) => {
                 drawCell(col, rowX, currentY, columnWidths[i], rowHeight, false);

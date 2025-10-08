@@ -56,6 +56,11 @@ const LandSchema = new Schema({
     image: {
         type: String,
         default: null
+    },
+    status:{
+        type: String,
+        enum: ["vacant", "occupied"],
+        default: "vacant"
     }
     
 },{timestamps: true})

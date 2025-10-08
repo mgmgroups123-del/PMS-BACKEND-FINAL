@@ -82,35 +82,10 @@ const TenantsSchema = new Schema({
         rent:{
             type: Number
         },
-        cgst: {
-            type: Number,
-            default: 0
-        },
-        sgst: {
-            type: Number,
-            default: 0
-        },
-        tds: {
-            type: Number
-        },
         maintenance:{
             type: Number
         },
     },
-    bank_details: {
-        bank_name: {
-            type: String,
-        },
-        account_number: {
-            type: String,
-        },
-        bank_branch: {
-            type: String,
-        },
-        bank_IFSC: {
-            type: String,
-        }
-    }
 
 }, { timestamps: true })
 

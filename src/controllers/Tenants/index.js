@@ -30,13 +30,24 @@ export const createTenant = async (req, res) => {
         if (errors.length > 0) {
             return res.status(400).json({ success: false, errors });
         }
-
+        
         const existingTenant = await TenantModel.findOne({ unit: req.body.unit, is_deleted: false })
         if (existingTenant) {
             return res.status(400).json({ message: "Already Occupied this unit" })
         }
 
-        const updatedUnitStatus = await UnitsModel.findByIdAndUpdate(req.body.unit, { status: "occupied" }, { new: true })
+        if(req.body.unit_type === "land"){
+            const land = await LandModel.findOne({_id: req.body.unit, is_deleted: false, status: "occupied"})
+            if(land){
+                return res.status(400).json({ success: false, message: "Aleready occupied this land" });
+            }
+        }
+
+        const updatedUnitStatus = await UnitsModel.findByIdAndUpdate({_id: req.body.unit, is_deleted: false}, { status: "occupied" }, { new: true })
+
+        if(req.body.unit_type === "land"){
+            const updatedLandStatus = await LandModel.findByIdAndUpdate({_id: req.body.unit, is_deleted: false}, { status: "occupied" }, { new: true })
+        }
 
         const tenant = new TenantModel(req.body);
         await tenant.save();
