@@ -9,7 +9,7 @@ const PropertySchema = new Schema({
     },
     property_type: {
         type: String,
-        enum: ["commercial", "villa", "apartment", "house"],
+        enum: ["commercial", "villa", "apartment", "house", "residency"],
         required: true,
         default:"commercial"
     },

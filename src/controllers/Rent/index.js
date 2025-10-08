@@ -52,7 +52,7 @@ cron.schedule("0 0 * * *", async () => {
                 paymentDueDay: paymentDueDay
             });
             if (existingRent) continue; // skip if rent already created
-            
+
             // Create rent if we're within 5 days of due date or past due date
             const daysDiff = Math.ceil((paymentDueDay - today) / (1000 * 60 * 60 * 24));
             if (daysDiff > 5) continue; // skip if more than 5 days before due date
@@ -416,8 +416,17 @@ export const downloadRentPDF = async (req, res) => {
         doc.font("Helvetica-Bold").text("For MGM ENTERTAINMENTS PVT LTD", 380, tableTop);
         doc.font("Helvetica").text("Authorized Signatory", 430, tableTop + 15);
 
+        // === Bank details box ===
+        const bankTop = tableTop + 60;
+        doc.rect(40, bankTop, 520, 80).stroke();
+        doc.font("Helvetica-Bold").text("BANK DETAILS", 50, bankTop + 10);
+        doc.font("Helvetica").text("Bank: AXIS BANK LTD", 50, bankTop + 25);
+        doc.text("Branch: R.K.Salai, Chennai", 50, bankTop + 38);
+        doc.text("A/C No: 006010200030117", 50, bankTop + 51);
+        doc.text("IFSC: UTIB0000006", 50, bankTop + 64);
+
         // Footer
-        doc.fontSize(8).text("This is a computer-generated invoice", 200, tableTop + 100);
+        doc.fontSize(8).text("This is a computer-generated invoice", 200, bankTop + 100);
 
         doc.end();
     } catch (err) {
@@ -454,9 +463,6 @@ function numberToWords(num) {
 }
 
 
-
-
-
 export const downloadRentExcel = async (req, res) => {
     try {
         // 1. Fetch all rents with tenant & property info
@@ -476,41 +482,71 @@ export const downloadRentExcel = async (req, res) => {
 
         // 3. Define columns
         worksheet.columns = [
+            { header: "S.No", key: "sno", width: 8 },
             { header: "Tenant Type", key: "tenant_type", width: 15 },
             { header: "Tenant Name", key: "tenant_name", width: 25 },
             { header: "Property", key: "property_name", width: 25 },
             { header: "Unit", key: "unit_name", width: 15 },
             { header: "Basic Rent", key: "rent", width: 15 },
             { header: "Maintenance", key: "maintenance", width: 15 },
-            { header: "Total After TDS", key: "total", width: 15 },
+            { header: "Subtotal Before GST", key: "subtotalBeforeGST", width: 20 },
+            { header: "CGST @9%", key: "cgst", width: 15 },
+            { header: "SGST @9%", key: "sgst", width: 15 },
+            { header: "Subtotal (incl. GST)", key: "subtotal", width: 22 },
+            { header: "TDS @10%", key: "tds", width: 15 },
+            { header: "Total After TDS", key: "total", width: 20 },
         ];
 
         // 4. Add rows
-        tenants.forEach((rent) => {
-            if (!rent.unit) return;
+        tenants.forEach((tenant, index) => {
+            if (!tenant.unit) return;
 
-            const financial = rent.financial_information || {};
-
-            const monthlyRent = Number(financial.rent) || 0;
+            const financial = tenant.financial_information || {};
+            const basicRent = Number(financial.rent) || 0;
             const maintenance = Number(financial.maintenance) || 0;
 
-            const basicRent = monthlyRent;
-            const total = basicRent + maintenance;
+            // 📊 Same calculation logic as PDF
+            const subtotalBeforeGST = basicRent + maintenance;
+            const cgst = subtotalBeforeGST * 0.09;
+            const sgst = subtotalBeforeGST * 0.09;
+            const subtotal = subtotalBeforeGST + cgst + sgst;
+            const tds = subtotal * 0.10;
+            const total = subtotal - tds;
 
             worksheet.addRow({
-                tenant_type: rent.tenant_type || "",
-                tenant_name: rent.personal_information?.full_name || "",
-                property_name: rent.unit?.propertyId?.property_name || rent?.unit?.land_name,
-                unit_name: rent.unit?.unit_name || rent?.unit?.land_name,
+                sno: index + 1,
+                tenant_type: tenant.tenant_type || "",
+                tenant_name: tenant.personal_information?.full_name || "",
+                property_name: tenant.unit?.propertyId?.property_name || tenant.unit?.land_name || "",
+                unit_name: tenant.unit?.unit_name || tenant.unit?.land_name || "",
                 rent: basicRent,
                 maintenance,
+                subtotalBeforeGST,
+                cgst,
+                sgst,
+                subtotal,
+                tds,
                 total,
             });
         });
 
         // 5. Style header
-        worksheet.getRow(1).font = { bold: true };
-        worksheet.getRow(1).alignment = { vertical: "middle", horizontal: "center" };
+        const headerRow = worksheet.getRow(1);
+        headerRow.font = { bold: true };
+        headerRow.alignment = { vertical: "middle", horizontal: "center" };
+        headerRow.height = 20;
+
+        // Optional: format numbers to 2 decimal places
+        worksheet.eachRow((row, rowNumber) => {
+            if (rowNumber > 1) {
+                [6, 7, 8, 9, 10, 11, 12, 13].forEach((col) => {
+                    const cell = row.getCell(col);
+                    if (typeof cell.value === "number") {
+                        cell.numFmt = "0.00";
+                    }
+                });
+            }
+        });
 
         // 6. Send file as response
         res.setHeader(
@@ -529,10 +565,11 @@ export const downloadRentExcel = async (req, res) => {
     }
 };
 
+
 export const downloadAllRentPDF = async (req, res) => {
     try {
-        const { tenant_type } = req.query
-        console.log("Query", req.query)
+        const { tenant_type } = req.query;
+
         let tenants = [];
         if (tenant_type === 'All Types') {
             tenants = await TenantModel.find({ is_deleted: false })
@@ -541,7 +578,7 @@ export const downloadAllRentPDF = async (req, res) => {
                     populate: { path: "propertyId", model: "property", strictPopulate: false }
                 });
         } else {
-            tenants = await TenantModel.find({ tenant_type: tenant_type, is_deleted: false })
+            tenants = await TenantModel.find({ tenant_type, is_deleted: false })
                 .populate({
                     path: "unit",
                     populate: { path: "propertyId", model: "property", strictPopulate: false }
@@ -552,98 +589,101 @@ export const downloadAllRentPDF = async (req, res) => {
             return res.status(404).json({ success: false, message: "No rent data found" });
         }
 
-        const logopath = path.join(process.cwd(), "public", "MGM_Logo.png")
+        const logopath = path.join(process.cwd(), "public", "MGM_Logo.png");
 
-        // 2. Setup PDF document
-        const doc = new PDFDocument({ margin: 30, size: "A3" });
-
-        // Stream PDF to response
+        // ✅ Use landscape for wide table
+        const doc = new PDFDocument({ margin: 30, size: "A3", layout: "landscape" });
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Content-Disposition", "attachment; filename=TenantRentReport.pdf");
         doc.pipe(res);
 
         doc.image(logopath, 50, 15, { width: 130, height: 70 });
-
-        // 3. Title
-        doc.fontSize(18).font("Helvetica").text("Tenant over all Report", { align: "center" });
+        doc.fontSize(18).font("Helvetica-Bold").text("Tenant Overall Report", { align: "center" });
         doc.moveDown(1);
-
-        doc.fontSize(12).font("Helvetica").text(`Date: ${new Date()}`, { align: "center" });
+        doc.fontSize(12).font("Helvetica").text(`Date: ${new Date().toLocaleString()}`, { align: "center" });
         doc.moveDown();
 
-        // 4. Table header
         const headers = [
             "S.No", "Tenant Type", "Tenant Name", "Property", "Unit",
-            "Basic Rent", "Maintenance",  "Total"
+            "Basic Rent", "Maintenance", "Subtotal Before GST",
+            "CGST @9%", "SGST @9%", "Subtotal (incl. GST)",
+            "TDS @10%", "Total After TDS"
         ];
 
-        // Adjust column widths (first one for serial number)
-        const columnWidths = [30, 50, 120, 120, 80, 150, 120, 160];
+        // ✅ Adjusted widths to fit landscape
+        const columnWidths = [40, 90, 120, 150, 90, 90, 90, 100, 80, 80, 80, 80, 100];
+        const rowHeight = 22;
+        const startX = 0.5;
+        let tableTopY = doc.y;
 
-        let tableTopY = doc.y; // top Y for header
-        let rowHeight = 20;
-
-        // Function to draw cell box + text
         const drawCell = (text, x, y, width, height, isHeader = false) => {
-            // Draw rectangle (border)
             doc.rect(x, y, width, height).stroke();
-
-            // Draw text inside cell
             doc.font(isHeader ? "Helvetica-Bold" : "Helvetica")
                 .fontSize(9)
-                .text(text, x, y + 5, {
-                    width: width,
-                    height: height,
-                    align: "center",
-                    valign: "center"
-                });
+                .text(text ?? "", x + 2, y + 5, { width: width - 4, align: "center" });
         };
 
-        // Draw header row
-        let startX = 5;
+        // Header row
+        let x = startX;
         headers.forEach((header, i) => {
-            drawCell(header, startX, tableTopY, columnWidths[i], rowHeight, true);
-            startX += columnWidths[i];
+            drawCell(header, x, tableTopY, columnWidths[i], rowHeight, true);
+            x += columnWidths[i];
         });
 
-        let currentY = tableTopY + rowHeight; // next row Y
+        let currentY = tableTopY + rowHeight;
 
-        // 5. Table rows with serial numbers
-        tenants.forEach((rent, index) => {
-            if (!rent.unit) return;
+        tenants.forEach((tenant, index) => {
+            if (!tenant.unit) return;
 
-            const financial = rent.financial_information || {};
-            const monthlyRent = Number(financial.rent) || 0;
-
+            const financial = tenant.financial_information || {};
+            const basicRent = Number(financial.rent) || 0;
             const maintenance = Number(financial.maintenance) || 0;
 
-            const basicRent = monthlyRent;
-            const simpleTotal = basicRent + maintenance;
+            const subtotalBeforeGST = basicRent + maintenance;
+            const cgst = subtotalBeforeGST * 0.09;
+            const sgst = subtotalBeforeGST * 0.09;
+            const subtotal = subtotalBeforeGST + cgst + sgst;
+            const tds = subtotal * 0.10;
+            const total = subtotal - tds;
 
             const row = [
-                (index + 1).toString(), // Serial number
-                rent.tenant_type || "",
-                rent.personal_information?.full_name || "",
-                rent.unit?.propertyId?.property_name || rent?.unit?.land_name,
-                rent.unit?.unit_name || rent?.unit?.land_name,
-                monthlyRent.toFixed(2),
+                (index + 1).toString(),
+                tenant.tenant_type || "",
+                tenant.personal_information?.full_name || "",
+                tenant.unit?.propertyId?.property_name || tenant.unit?.land_name || "",
+                tenant.unit?.unit_name || tenant.unit?.land_name || "",
+                basicRent.toFixed(2),
                 maintenance.toFixed(2),
-                simpleTotal.toFixed(2)
+                subtotalBeforeGST.toFixed(2),
+                cgst.toFixed(2),
+                sgst.toFixed(2),
+                subtotal.toFixed(2),
+                tds.toFixed(2),
+                total.toFixed(2)
             ];
 
-            let rowX = 5;
+            // Page break
+            if (currentY + rowHeight > doc.page.height - 50) {
+                doc.addPage({ layout: "landscape" });
+                currentY = 120;
+                x = startX;
+                headers.forEach((header, i) => {
+                    drawCell(header, x, currentY, columnWidths[i], rowHeight, true);
+                    x += columnWidths[i];
+                });
+                currentY += rowHeight;
+            }
 
+            let rowX = startX;
             row.forEach((col, i) => {
-                drawCell(col, rowX, currentY, columnWidths[i], rowHeight, false);
+                drawCell(col, rowX, currentY, columnWidths[i], rowHeight);
                 rowX += columnWidths[i];
             });
 
             currentY += rowHeight;
         });
 
-        // 6. Finalize PDF
         doc.end();
-
     } catch (err) {
         console.error(err);
         if (!res.headersSent) {
@@ -651,3 +691,5 @@ export const downloadAllRentPDF = async (req, res) => {
         }
     }
 };
+
+
