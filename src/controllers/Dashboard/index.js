@@ -326,134 +326,112 @@ function generateReport(data, expence) {
 
 export const getOccupancyStats = async (req, res) => {
   try {
-    // 1) Overall summary
-    const overall = await UnitsModel.aggregate([
+    /** -------------------------
+     * 1) Units overall
+     * ------------------------- */
+    const unitOverall = await UnitsModel.aggregate([
       {
         $group: {
           _id: null,
-          totalUnits: { $sum: 1 },
-          occupiedUnits: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "occupied"] }, 1, 0]
-            }
-          },
-          vacantUnits: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "vacant"] }, 1, 0]
-            }
-          }
+          total: { $sum: 1 },
+          occupied: { $sum: { $cond: [{ $eq: ["$status", "occupied"] }, 1, 0] } },
+          vacant: { $sum: { $cond: [{ $eq: ["$status", "vacant"] }, 1, 0] } }
         }
-      },
-      {
-        $addFields: {
-          occupancyRate: {
-            $cond: [
-              { $eq: ["$totalUnits", 0] },
-              0,
-              {
-                $round: [
-                  {
-                    $multiply: [
-                      { $divide: ["$occupiedUnits", "$totalUnits"] },
-                      100
-                    ]
-                  },
-                  2
-                ]
-              }
-            ]
-          }
-        }
-      },
-      { $project: { _id: 0 } }
+      }
     ]);
 
-    const overallStats = overall[0] || {
-      totalUnits: 0,
-      occupiedUnits: 0,
-      vacantUnits: 0,
-      occupancyRate: 0
-    };
+    const u = unitOverall[0] || { total: 0, occupied: 0, vacant: 0 };
 
-    // 2) Monthly trend (only months with data)
-    const monthlyData = await UnitsModel.aggregate([
+    /** -------------------------
+     * 2) Lands overall
+     * ------------------------- */
+    const landOverall = await LandModel.aggregate([
+      { $match: { is_deleted: false } },
       {
         $group: {
-          _id: {
-            year: { $year: "$createdAt" },
-            month: { $month: "$createdAt" }
-          },
-          totalUnits: { $sum: 1 },
-          occupiedUnits: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "occupied"] }, 1, 0]
-            }
-          },
-          vacantUnits: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "vacant"] }, 1, 0]
-            }
-          }
+          _id: null,
+          total: { $sum: 1 },
+          occupied: { $sum: { $cond: [{ $eq: ["$status", "occupied"] }, 1, 0] } },
+          vacant: { $sum: { $cond: [{ $eq: ["$status", "vacant"] }, 1, 0] } }
         }
-      },
-      {
-        $addFields: {
-          occupancyRate: {
-            $cond: [
-              { $eq: ["$totalUnits", 0] },
-              0,
-              {
-                $round: [
-                  {
-                    $multiply: [
-                      { $divide: ["$occupiedUnits", "$totalUnits"] },
-                      100
-                    ]
-                  },
-                  2
-                ]
-              }
-            ]
-          }
-        }
-      },
-      { $sort: { "_id.year": 1, "_id.month": 1 } }
+      }
     ]);
 
-    // 3) Fill missing months with 0
+    const l = landOverall[0] || { total: 0, occupied: 0, vacant: 0 };
+
+    /** -------------------------
+     * 3) Combined overall
+     * ------------------------- */
+    const total = u.total + l.total;
+    const occupied = u.occupied + l.occupied;
+    const vacant = u.vacant + l.vacant;
+    const occupancyRate = total === 0 ? 0 : Number(((occupied / total) * 100).toFixed(2));
+
+    const overallStats = { total, occupied, vacant, occupancyRate };
+
+    /** -------------------------
+     * 4) Monthly Units
+     * ------------------------- */
+    const monthlyUnits = await UnitsModel.aggregate([
+      {
+        $group: {
+          _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" } },
+          total: { $sum: 1 },
+          occupied: { $sum: { $cond: [{ $eq: ["$status", "occupied"] }, 1, 0] } },
+          vacant: { $sum: { $cond: [{ $eq: ["$status", "vacant"] }, 1, 0] } }
+        }
+      }
+    ]);
+
+    /** -------------------------
+     * 5) Monthly Lands
+     * ------------------------- */
+    const monthlyLands = await LandModel.aggregate([
+      { $match: { is_deleted: false } },
+      {
+        $group: {
+          _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" } },
+          total: { $sum: 1 },
+          occupied: { $sum: { $cond: [{ $eq: ["$status", "occupied"] }, 1, 0] } },
+          vacant: { $sum: { $cond: [{ $eq: ["$status", "vacant"] }, 1, 0] } }
+        }
+      }
+    ]);
+
+    /** -------------------------
+     * 6) Combine Monthly
+     * ------------------------- */
     const currentYear = new Date().getFullYear();
     const filledMonthly = [];
+
     for (let m = 1; m <= 12; m++) {
-      const monthData = monthlyData.find(
-        (d) => d._id.year === currentYear && d._id.month === m
-      );
-      if (monthData) {
-        filledMonthly.push({
-          year: monthData._id.year,
-          month: m,
-          totalUnits: monthData.totalUnits,
-          occupiedUnits: monthData.occupiedUnits,
-          vacantUnits: monthData.vacantUnits,
-          occupancyRate: monthData.occupancyRate
-        });
-      } else {
-        filledMonthly.push({
-          year: currentYear,
-          month: m,
-          totalUnits: 0,
-          occupiedUnits: 0,
-          vacantUnits: 0,
-          occupancyRate: 0
-        });
-      }
+      const uMonth = monthlyUnits.find(d => d._id.year === currentYear && d._id.month === m) || { total: 0, occupied: 0, vacant: 0 };
+      const lMonth = monthlyLands.find(d => d._id.year === currentYear && d._id.month === m) || { total: 0, occupied: 0, vacant: 0 };
+
+      const t = uMonth.total + lMonth.total;
+      const occ = uMonth.occupied + lMonth.occupied;
+      const vac = uMonth.vacant + lMonth.vacant;
+      const occRate = t === 0 ? 0 : Number(((occ / t) * 100).toFixed(2));
+
+      filledMonthly.push({
+        year: currentYear,
+        month: m,
+        total: t,
+        occupied: occ,
+        vacant: vac,
+        occupancyRate: occRate
+      });
     }
 
-    // 4) API Response
+    /** -------------------------
+     * 7) Response
+     * ------------------------- */
     return res.status(200).json({
       success: true,
       overall: overallStats,
       monthlyTrend: filledMonthly
     });
+
   } catch (error) {
     console.error("Get Occupancy Stats Error:", error);
     return res.status(500).json({
