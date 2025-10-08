@@ -289,11 +289,11 @@ export const deleteRent = async (req, res) => {
     }
 }
 
-
 export const downloadRentPDF = async (req, res) => {
     try {
         const { uuid } = req.params;
 
+        // Fetch rent details with tenant, unit, and property
         const rent = await RentsModel.findOne({ uuid, is_deleted: false })
             .populate({
                 path: "tenantId",
@@ -308,30 +308,33 @@ export const downloadRentPDF = async (req, res) => {
         if (!rent) {
             return res.status(404).json({ success: false, message: "Rent not found" });
         }
-        const logopath = path.join(process.cwd(), "public", "MGM_Logo.png")
+
+        const logopath = path.join(process.cwd(), "public", "MGM_Logo.png");
 
         // === Dynamic Invoice Calculations ===
-        const basicRent = Number(rent.tenantId.financial_information.rent)
-        const maintenance = Number(rent.tenantId.financial_information?.maintenance)
+        const basicRent = Number(rent.tenantId.financial_information?.rent) || 0;
+        const maintenance = Number(rent.tenantId.financial_information?.maintenance) || 0;
+
         const subtotalBeforeGST = basicRent + maintenance;
         const cgst = subtotalBeforeGST * 0.09;
         const sgst = subtotalBeforeGST * 0.09;
-        const tds = subtotalBeforeGST * 0.10;
-        const subtotal = subtotalBeforeGST + cgst + sgst;
-        const total = subtotalBeforeGST - tds;
+        const subtotalWithGST = subtotalBeforeGST + cgst + sgst;
+        const tds = subtotalWithGST * 0.10;
+        const total = subtotalWithGST - tds;
 
-        // === PDF SETUP ===
+        // === PDF Setup ===
         const doc = new PDFDocument({ size: "A4", margin: 40 });
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Content-Disposition", `attachment; filename=${rent.uuid}.pdf`);
         doc.pipe(res);
 
+        // Logo
         doc.image(logopath, 10, 15, { width: 130, height: 70 });
 
         // Title
         doc.fontSize(14).font("Helvetica-Bold").text("INVOICE", { align: "center" });
 
-        // === Supplier (Owner) details ===
+        // Owner Details
         let y = 100;
         doc.fontSize(10).font("Helvetica-Bold").text("Owner Details:", 40, y);
         y += 15;
@@ -342,45 +345,45 @@ export const downloadRentPDF = async (req, res) => {
         y += 12;
         doc.text(`${property?.owner_information?.phone || "33AABCM9561A1ZS"}`, 40, y);
 
-
-        // Add Date on right side
+        // Date on right
         const currentDate = new Date().toLocaleDateString("en-IN", {
             day: "2-digit",
             month: "short",
             year: "numeric"
         });
-        doc.font("Helvetica").text(`Date: ${currentDate}`, 450, 80); // right aligned
-        y += 15;
+        doc.font("Helvetica").text(`Date: ${currentDate}`, 450, 80);
 
-        // === Tenant details ===
-        y += 2;
+        // Tenant Details
+        y += 20;
         doc.font("Helvetica-Bold").text("Tenant Details:", 40, y);
         y += 15;
         const tenant = rent.tenantId;
         doc.font("Helvetica").text(tenant?.personal_information?.full_name || "Tenant Name", 40, y);
         y += 12;
-        doc.font("Helvetica").text(tenant?.unit?.unit_name || "Tenant", 40, y);
+        doc.text(tenant?.unit?.unit_name || "Tenant Unit", 40, y);
         y += 12;
         doc.text(tenant?.personal_information?.address || "Tenant Address", 40, y);
         y += 12;
         doc.text(`${tenant?.personal_information?.phone || "NA"}`, 40, y);
 
-        // === Table Helper ===
-        const drawTableRow = (rowY, data, colWidths) => {
+        // Table Helper
+        const drawTableRow = (rowY, data, colWidths, isHeader = false) => {
             let x = 40;
             data.forEach((text, i) => {
                 doc.rect(x, rowY, colWidths[i], 20).stroke();
-                doc.font("Helvetica").fontSize(9).text(text, x + 5, rowY + 6);
+                doc.font(isHeader ? "Helvetica-Bold" : "Helvetica")
+                    .fontSize(9)
+                    .text(text, x + 5, rowY + 6, { width: colWidths[i] - 10, align: "left" });
                 x += colWidths[i];
             });
         };
 
-        // === Rent Table ===
+        // Rent Table
         let tableTop = 230;
-        const colWidths = [50, 250, 120, 100]; // Sl No, Particulars, Amount, Total
+        const colWidths = [50, 250, 120, 100];
 
-        // Header row
-        drawTableRow(tableTop, ["Sl No.", "Particulars", "Amount", "Total"], colWidths);
+        // Header
+        drawTableRow(tableTop, ["Sl No.", "Particulars", "Amount", "Total"], colWidths, true);
 
         // Rows
         const rows = [
@@ -389,11 +392,11 @@ export const downloadRentPDF = async (req, res) => {
             ["3", "Subtotal Before GST", subtotalBeforeGST.toFixed(2), subtotalBeforeGST.toFixed(2)],
             ["4", "CGST @9%", cgst.toFixed(2), cgst.toFixed(2)],
             ["5", "SGST @9%", sgst.toFixed(2), sgst.toFixed(2)],
-            ["6", "Subtotal (incl. GST)", subtotal.toFixed(2), subtotal.toFixed(2)],
+            ["6", "Subtotal (incl. GST)", subtotalWithGST.toFixed(2), subtotalWithGST.toFixed(2)],
             ["7", "TDS @10%", `-${tds.toFixed(2)}`, `-${tds.toFixed(2)}`],
         ];
 
-        rows.forEach((row, i) => {
+        rows.forEach((row) => {
             tableTop += 20;
             drawTableRow(tableTop, row, colWidths);
         });
@@ -403,32 +406,23 @@ export const downloadRentPDF = async (req, res) => {
         doc.rect(40, tableTop, colWidths[0] + colWidths[1] + colWidths[2], 20).stroke();
         doc.font("Helvetica-Bold").text("Grand Total", 45, tableTop + 6);
         doc.rect(40 + colWidths[0] + colWidths[1] + colWidths[2], tableTop, colWidths[3], 20).stroke();
-        doc.font("Helvetica-Bold").text(`${total.toFixed(2)}`, 40 + colWidths[0] + colWidths[1] + colWidths[2] + 5, tableTop + 6);
+        doc.font("Helvetica-Bold").text(total.toFixed(2), 40 + colWidths[0] + colWidths[1] + colWidths[2] + 5, tableTop + 6);
 
-        // === Amount in words ===
+        // Amount in Words
         tableTop += 40;
-        doc.font("Helvetica-Bold").text("Amount Chargeable (in words)", 40, tableTop);
-        doc.font("Helvetica").text(`INR : ${numberToWords(total)} only`, 220, tableTop);
+        doc.font("Helvetica-Bold").text("Amount Chargeable (in words):", 40, tableTop);
+        doc.font("Helvetica").text(`INR : ${numberToWords(total)} only`, 250, tableTop);
 
-        // === Footer / Signature ===
-        // tableTop += 60;
+        // Footer / Signature
         tableTop += 60;
         doc.font("Helvetica-Bold").text("For MGM ENTERTAINMENTS PVT LTD", 380, tableTop);
         doc.font("Helvetica").text("Authorized Signatory", 430, tableTop + 15);
 
-        // === Bank details box ===
-        const bankTop = tableTop + 60;
-        doc.rect(40, bankTop, 520, 80).stroke();
-        doc.font("Helvetica-Bold").text("BANK DETAILS", 50, bankTop + 10);
-        doc.font("Helvetica").text("Bank: AXIS BANK LTD", 50, bankTop + 25);
-        doc.text("Branch: R.K.Salai, Chennai", 50, bankTop + 38);
-        doc.text("A/C No: 006010200030117", 50, bankTop + 51);
-        doc.text("IFSC: UTIB0000006", 50, bankTop + 64);
-
-        // Footer
-        doc.fontSize(8).text("This is a computer-generated invoice", 200, bankTop + 100);
+        // Footer note
+        doc.fontSize(8).text("This is a computer-generated invoice", 200, tableTop + 100);
 
         doc.end();
+
     } catch (err) {
         console.error(err);
         if (!res.headersSent) {
@@ -436,6 +430,7 @@ export const downloadRentPDF = async (req, res) => {
         }
     }
 };
+
 
 // === Helper to convert numbers to words ===
 function numberToWords(num) {
