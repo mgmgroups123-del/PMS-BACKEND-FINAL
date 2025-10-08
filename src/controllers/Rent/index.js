@@ -329,7 +329,7 @@ export const downloadRentPDF = async (req, res) => {
             sgst = subtotalBeforeGST * 0.09;
             subtotalWithGST = subtotalBeforeGST + cgst + sgst;
             tds = subtotalBeforeGST * 0.10;
-            total = subtotalWithGST - tds;
+            total = subtotalBeforeGST - tds;
         }
 
         // === PDF Setup ===
@@ -542,7 +542,7 @@ export const downloadRentExcel = async (req, res) => {
             const sgst = skipGST ? 0 : subtotalBeforeGST * 0.09;
             const subtotal = skipGST ? subtotalBeforeGST : subtotalBeforeGST + cgst + sgst;
             const tds = skipGST ? 0 : subtotalBeforeGST * 0.10;
-            const total = subtotal - tds;
+            const total = subtotalBeforeGST - tds;
 
 
             const rowData = {
@@ -685,7 +685,7 @@ export const downloadAllRentPDF = async (req, res) => {
             const sgst = skipGST ? 0 :subtotalBeforeGST * 0.09;
             const subtotal = skipGST ? subtotalBeforeGST : subtotalBeforeGST + cgst + sgst;
             const tds = skipGST ? 0 : subtotalBeforeGST * 0.10;
-            const total = subtotal - tds;
+            const total = subtotalBeforeGST - tds;
 
             const row = [
                 (index + 1).toString(),
