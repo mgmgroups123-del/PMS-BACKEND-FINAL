@@ -26,14 +26,22 @@ const allowedOrigins = [
     "http://localhost:5174",
     "http://mgmproperties.co.in",
     "https://mgmproperties.co.in",
+    "http://api.mgmproperties.co.in",
+    "https://api.mgmproperties.co.in",
 ];
 app.use(
     cors({
         origin: allowedOrigins,
-        methods: ["GET", "POST", "PUT", "DELETE"],
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
         credentials: true,
+        preflightContinue: false,
+        optionsSuccessStatus: 204,
     })
 );
+
+// Explicitly handle CORS preflight requests
+app.options("*", cors({ origin: allowedOrigins, credentials: true }));
 
 app.get("/ping", (req, res) => {
     res.send("Server is healthy");
