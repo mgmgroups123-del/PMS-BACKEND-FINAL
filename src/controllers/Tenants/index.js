@@ -200,6 +200,39 @@ export const updateTenantByUUID = async (req, res) => {
     }
 };
 
+export const patchTenantByUUID = async (req, res) => {
+    try {
+        const { uuid } = req.params
+        const user = req.user
+        const tenant = await TenantModel.findOneAndUpdate(
+            { uuid: uuid },
+            req.body,
+            { new: true, runValidators: true }
+        );
+
+        if (!tenant) {
+            return res.status(404).json({ success: false, message: "Tenant not found" });
+        }
+
+        await ActivityLogModel.create({
+            userId: user._id,
+            title: 'update tenant info',
+            details: `${user.first_name} to update the tenant info in "${tenant._id}"`,
+            action: 'Update',
+            activity_type: 'tenant'
+        })
+
+        return res.status(200).json({
+            success: true,
+            message: "Tenant updated successfully",
+            data: tenant
+        });
+    } catch (error) {
+        console.error("Update Tenant Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 export const deleteTenantByUUID = async (req, res) => {
     try {
         const { uuid } = req.params

@@ -5,19 +5,19 @@ const TenantsSchema = new Schema({
     personal_information: {
         full_name: {
             type: String,
-            required: true
+            // required: true
         },
         email: {
             type: String,
-            required: true
+            // required: true
         },
         phone: {
             type: String,
-            required: true
+            // required: true
         },
         address: {
             type: String,
-            required: true
+            // required: true
         }
     },
     lease_duration: {
@@ -69,6 +69,10 @@ const TenantsSchema = new Schema({
     uuid: {
         type: String,
         default: uuid
+    },
+    hasGST: {
+        type: Boolean,
+        default: false
     },
     is_active: {
         type: Boolean,

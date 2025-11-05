@@ -9,5 +9,6 @@ TenantRouter.get("/", getAllTenants)
 TenantRouter.get("/:uuid", getTenantByUUID)
 TenantRouter.put("/:uuid",AuthVerify(["owner", "manager", "finance"]), updateTenantByUUID)
 TenantRouter.delete("/:uuid",AuthVerify(["owner"]), deleteTenantByUUID)
+TenantRouter.patch("/:uuid",AuthVerify(["owner", "manager", "finance"]), updateTenantByUUID)
 
 export default TenantRouter;
