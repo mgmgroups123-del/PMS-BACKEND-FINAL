@@ -98,7 +98,7 @@ cron.schedule("0 0 * * *", async () => {
 export const getRents = async (req, res) => {
     try {
         const { month, year } = req.query;
-        console.log("month", month, 'year', year)
+
         if (!month || !year) {
             return res.status(400).json({ message: "Month and Year are required" });
         }
@@ -106,28 +106,80 @@ export const getRents = async (req, res) => {
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0, 23, 59, 59);
 
-        const rents = await RentsModel.find({
+        const prevMonth = month - 1 === 0 ? 12 : month - 1;
+        const prevYear = month - 1 === 0 ? year - 1 : year;
+        const prevStart = new Date(prevYear, prevMonth - 1, 1);
+        const prevEnd = new Date(prevYear, prevMonth, 0, 23, 59, 59);
+
+        // Fetch current month rents
+        const currentMonthRents = await RentsModel.find({
             paymentDueDay: { $gte: startDate, $lte: endDate },
             is_deleted: false
-        }).populate({ path: "tenantId", model: "tenant", populate: { path: "unit", model: "unit" } });
+        }).populate({
+            path: "tenantId",
+            model: "tenant",
+            populate: { path: "unit", model: "unit" }
+        });
 
-        const TotalDue = await TenantModel.aggregate([
-            {
-                $match: {
-                    tenant_type: "rent",
-                    createdAt: { $gte: startDate, $lte: endDate }
-                }
-            },
-            {
-                $group: {
-                    _id: null,
-                    total: { $sum: "$rent" }
-                }
-            }
-        ]);
+        // Fetch previous month rents
+        const previousMonthRents = await RentsModel.find({
+            paymentDueDay: { $gte: prevStart, $lte: prevEnd },
+            is_deleted: false
+        }).populate({
+            path: "tenantId",
+            model: "tenant",
+            populate: { path: "unit", model: "unit" }
+        });
 
+        // Combine data by tenant
+        const combined = currentMonthRents.map((curr) => {
+            const prev = previousMonthRents.find(
+                (p) => p.tenantId?._id?.toString() === curr.tenantId?._id?.toString()
+            );
+
+            return {
+                tenantId: curr.tenantId?._id,
+                tenantName: curr.tenantId?.personal_information?.full_name || "",
+                floor: curr.tenantId?.unit?.unit_name || "",
+                companyName: curr.tenantId?.unit?.propertyId?.property_name || "",
+                address: curr.tenantId?.personal_information?.address || "",
+                lease_start_date: curr.tenantId?.lease_duration?.start_date || "",
+                lease_end_date: curr.tenantId?.lease_duration?.end_date || "",
+                tenantEmail: curr.tenantId?.personal_information?.email,
+                currentMonth: {
+                    uuid: curr.uuid,
+                    amount: curr.tenantId.rent,
+                    status: curr.status,
+                    dueDate: curr.paymentDueDay,
+                    cgst: curr.tenantId.financial_information.cgst,
+                    sgst: curr.tenantId.financial_information.sgst,
+                    tds: curr.tenantId.financial_information.tds,
+                    maintenance: curr.tenantId.financial_information.maintenance,
+                    total: curr.tenantId.financial_information.total,
+                },
+                previousMonth: prev
+                    ? {
+                        uuid: prev.uuid,
+                        amount: prev.tenantId.rent,
+                        status: prev.status,
+                        dueDate: prev.paymentDueDay,
+                        cgst: prev.tenantId.financial_information.cgst,
+                        sgst: prev.tenantId.financial_information.sgst,
+                        tds: prev.tenantId.financial_information.tds,
+                        maintenance: prev.tenantId.financial_information.maintenance,
+                        total: prev.tenantId.financial_information.total,
+                    }
+                    : null
+            };
+        });
+
+        // Calculate Total Due Amount (sum of all current month rents)
+        const totalDueAmount = currentMonthRents.reduce((sum, rent) => {
+            return sum + (rent.tenantId?.rent || 0);
+        }, 0);
+
+        // Calculate Total Deposits (all time deposits for rent tenants)
         const TotalDeposit = await TenantModel.aggregate([
-
             {
                 $match: { tenant_type: 'rent' }
             },
@@ -137,22 +189,32 @@ export const getRents = async (req, res) => {
                     total: { $sum: "$deposit" }
                 }
             }
+        ]);
 
-        ])
+        // Calculate paid and pending amounts based on current month rents
+        const paidRents = currentMonthRents.filter(rent => rent.status === "paid");
+        const pendingRents = currentMonthRents.filter(rent => rent.status === "pending");
 
-        const totalDueAmount = TotalDue.length > 0 ? TotalDue[0].total : 0;
+        const totalPaidThisMonth = paidRents.reduce((sum, rent) => {
+            return sum + (rent.tenantId?.rent || 0);
+        }, 0);
 
+        const totalPendingThisMonth = pendingRents.reduce((sum, rent) => {
+            return sum + (rent.tenantId?.rent || 0);
+        }, 0);
+
+        // Alternative approach using aggregation (more efficient for large datasets)
         const stats = await RentsModel.aggregate([
             {
                 $match: {
                     paymentDueDay: { $gte: startDate, $lte: endDate },
-                    status: { $in: ["paid", "pending"] }
+                    is_deleted: false
                 }
             },
             {
                 $lookup: {
                     from: "tenants",
-                    localField: "tenant_id",
+                    localField: "tenantId",
                     foreignField: "_id",
                     as: "tenant"
                 }
@@ -161,29 +223,35 @@ export const getRents = async (req, res) => {
             {
                 $group: {
                     _id: "$status",
-                    totalAmount: { $sum: "$tenant.rent" }
+                    totalAmount: { $sum: "$tenant.rent" },
+                    count: { $sum: 1 }
                 }
             }
         ]);
 
-        const totalPaidThisMonth = stats.find(s => s._id === "paid")?.totalAmount || 0;
-        const totalPendingThisMonth = stats.find(s => s._id === "pending")?.totalAmount || 0;
-
+        // Extract values from aggregation (alternative method)
+        const totalPaidFromAgg = stats.find(s => s._id === "paid")?.totalAmount || 0;
+        const totalPendingFromAgg = stats.find(s => s._id === "pending")?.totalAmount || 0;
 
         res.status(200).json({
             success: true,
             message: "Rents retrieved successfully",
             data: {
-                rents,
+                rents: currentMonthRents,
                 totalDueAmount,
-                totalPaidThisMonth,
-                totalPendingThisMonth,
-                TotalDeposit
+                totalPaidThisMonth, // Using reduce method
+                totalPendingThisMonth, // Using reduce method
+                TotalDeposit,
+                combined
             }
         });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Error fetching rents" });
+        console.error("Error fetching rents:", error);
+        res.status(500).json({ 
+            success: false,
+            message: "Error fetching rents",
+            error: error.message 
+        });
     }
 };
 
@@ -292,22 +360,44 @@ export const deleteRent = async (req, res) => {
 export const downloadRentPDF = async (req, res) => {
     try {
         const { uuid } = req.params;
+        const { year, month } = req.query;
 
         // Fetch rent details
-        const rent = await RentsModel.findOne({ uuid, is_deleted: false })
-            .populate({
-                path: "tenantId",
-                model: "tenant",
-                populate: {
-                    path: "unit",
-                    model: "unit",
-                    populate: { path: "propertyId", model: "property" },
-                },
-            });
+        const rent = await RentsModel.findOne({
+            uuid,
+            is_deleted: false
+        }).populate({
+            path: "tenantId",
+            model: "tenant",
+            populate: {
+                path: "unit",
+                model: "unit",
+                populate: { path: "propertyId", model: "property" },
+            },
+        });
 
         if (!rent) {
-            return res.status(404).json({ success: false, message: "Rent not found" });
+            return res.status(404).json({
+                success: false,
+                message: "Rent not found"
+            });
         }
+
+        // Extract month and year from paymentDueDay or use provided parameters
+        const paymentDueDate = new Date(rent.paymentDueDay);
+        let invoiceMonth, invoiceYear;
+
+        if (year && month) {
+            // Use provided month and year from query parameters
+            invoiceMonth = parseInt(month);
+            invoiceYear = parseInt(year);
+        } else {
+            // Use month and year from paymentDueDay
+            invoiceMonth = paymentDueDate.getMonth() + 1;
+            invoiceYear = paymentDueDate.getFullYear();
+        }
+
+        console.log(`Generating invoice for: ${getMonthName(invoiceMonth)} ${invoiceYear}`);
 
         const logopath = path.join(process.cwd(), "public", "MGM_Logo.png");
 
@@ -322,28 +412,32 @@ export const downloadRentPDF = async (req, res) => {
         console.log("Property Type:", propertyType);
         console.log("Tenant Type:", tenantType);
 
-        let cgst = 0, sgst = 0, subtotalWithGST = subtotalBeforeGST, tds = 0, total = subtotalBeforeGST;
+        let cgst = 0, sgst = 0, tds = 0, total = subtotalBeforeGST;
 
         if (!(propertyType === "residency" || tenantType === "lease")) {
-            cgst = subtotalBeforeGST * 0.09;
-            sgst = subtotalBeforeGST * 0.09;
-            subtotalWithGST = subtotalBeforeGST + cgst + sgst;
-            tds = subtotalBeforeGST * 0.10;
-            total = subtotalBeforeGST - tds;
+            cgst = rent.tenantId.financial_information?.cgst
+            sgst = rent.tenantId.financial_information?.sgst
+            tds = rent.tenantId.financial_information?.tds
+            total = rent.tenantId.rent
         }
 
         // === PDF Setup ===
         const doc = new PDFDocument({ size: "A4", margin: 40 });
         res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", `attachment; filename=${rent.uuid}.pdf`);
+        res.setHeader("Content-Disposition", `attachment; filename=rent_invoice_${rent.uuid}_${invoiceYear}_${invoiceMonth.toString().padStart(2, '0')}.pdf`);
         doc.pipe(res);
 
         // Logo & Title
         doc.image(logopath, 10, 15, { width: 130, height: 70 });
-        doc.fontSize(14).font("Helvetica-Bold").text("INVOICE", { align: "center" });
+        doc.fontSize(14).font("Helvetica-Bold").text("RENT INVOICE", { align: "center" });
+
+        // Invoice Period and Receipt ID
+        doc.fontSize(10).font("Helvetica")
+            .text(`Period: ${getMonthName(invoiceMonth)} ${invoiceYear}`, { align: "center" })
+            .text(`Receipt ID: ${rent.receiptId || 'N/A'}`, { align: "center" });
 
         // Owner Details
-        let y = 100;
+        let y = 130;
         doc.fontSize(10).font("Helvetica-Bold").text("Owner Details:", 40, y);
         y += 15;
         const property = rent.tenantId.unit.propertyId;
@@ -353,13 +447,23 @@ export const downloadRentPDF = async (req, res) => {
         y += 12;
         doc.text(`${property?.owner_information?.phone || "33AABCM9561A1ZS"}`, 40, y);
 
-        // Date on right
+        // Invoice Date, Due Date and Status on right
         const currentDate = new Date().toLocaleDateString("en-IN", {
             day: "2-digit",
             month: "short",
             year: "numeric"
         });
-        doc.font("Helvetica").text(`Date: ${currentDate}`, 450, 80);
+
+        const dueDateFormatted = paymentDueDate.toLocaleDateString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric"
+        });
+
+        doc.font("Helvetica")
+            .text(`Invoice Date: ${currentDate}`, 400, 100)
+            .text(`Due Date: ${dueDateFormatted}`, 400, 115)
+            .text(`Status: ${rent.status.toUpperCase()}`, 400, 130);
 
         // Tenant Details
         y += 20;
@@ -373,6 +477,8 @@ export const downloadRentPDF = async (req, res) => {
         doc.text(tenant?.personal_information?.address || "Tenant Address", 40, y);
         y += 12;
         doc.text(`${tenant?.personal_information?.phone || "NA"}`, 40, y);
+        y += 12;
+        doc.text(`${tenant?.personal_information?.email || "NA"}`, 40, y);
 
         // Table Helper
         const drawTableRow = (rowY, data, colWidths, isHeader = false) => {
@@ -387,7 +493,7 @@ export const downloadRentPDF = async (req, res) => {
         };
 
         // Rent Table
-        let tableTop = 230;
+        let tableTop = 300;
         const colWidths = propertyType === "residency" && tenantType === "lease"
             ? [50, 250, 120] // Only Sl No, Particulars, Amount
             : [50, 250, 120, 100]; // Include Total column for GST/TDS
@@ -408,11 +514,9 @@ export const downloadRentPDF = async (req, res) => {
             : [
                 ["1", "Basic Rent", basicRent.toFixed(2), basicRent.toFixed(2)],
                 ["2", "Maintenance Charges", maintenance.toFixed(2), maintenance.toFixed(2)],
-                ["3", "Subtotal Before GST", subtotalBeforeGST.toFixed(2), subtotalBeforeGST.toFixed(2)],
-                ["4", "CGST @9%", cgst.toFixed(2), cgst.toFixed(2)],
-                ["5", "SGST @9%", sgst.toFixed(2), sgst.toFixed(2)],
-                ["6", "Subtotal (incl. GST)", subtotalWithGST.toFixed(2), subtotalWithGST.toFixed(2)],
-                ["7", "TDS @10%", `-${tds.toFixed(2)}`, `-${tds.toFixed(2)}`],
+                ["3", "CGST @9%", cgst, cgst],
+                ["4", "SGST @9%", sgst, sgst],
+                ["7", "TDS @10%", `-${tds}`, `-${tds}`],
             ];
 
         rows.forEach((row) => {
@@ -457,6 +561,14 @@ export const downloadRentPDF = async (req, res) => {
     }
 };
 
+// Helper function to get month name
+function getMonthName(month) {
+    const months = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ];
+    return months[month - 1];
+}
 
 
 // === Helper to convert numbers to words ===
@@ -682,7 +794,7 @@ export const downloadAllRentPDF = async (req, res) => {
 
             const subtotalBeforeGST = basicRent + maintenance;
             const cgst = skipGST ? 0 : subtotalBeforeGST * 0.09;
-            const sgst = skipGST ? 0 :subtotalBeforeGST * 0.09;
+            const sgst = skipGST ? 0 : subtotalBeforeGST * 0.09;
             const subtotal = skipGST ? subtotalBeforeGST : subtotalBeforeGST + cgst + sgst;
             const tds = skipGST ? 0 : subtotalBeforeGST * 0.10;
             const total = subtotalBeforeGST - tds;

@@ -203,15 +203,16 @@ export const updateTenantByUUID = async (req, res) => {
 export const patchTenantByUUID = async (req, res) => {
     try {
         const { uuid } = req.params
+        console.log(uuid, "uuid")
         const user = req.user
         const tenant = await TenantModel.findOneAndUpdate(
-            { uuid: uuid },
+            { _id: uuid },
             req.body,
             { new: true, runValidators: true }
         );
 
         if (!tenant) {
-            return res.status(404).json({ success: false, message: "Tenant not found" });
+            return res.status(404).json({ success: false, message: "Tenant is not found" });
         }
 
         await ActivityLogModel.create({

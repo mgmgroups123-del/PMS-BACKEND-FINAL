@@ -89,15 +89,18 @@ const TenantsSchema = new Schema({
         maintenance:{
             type: Number
         },
-        gst: {
-            type: String
+        sgst: {
+            type: Number
         },
         cgst: {
-            type: String
+            type: Number
         },
         tds: {
-            type: String
+            type: Number
         },
+        total: {
+            type: Number
+        }
     },
 
 }, { timestamps: true })

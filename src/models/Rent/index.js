@@ -28,6 +28,9 @@ const RentsSchema = new Schema({
         type: Boolean,
         default: false
     },
+    paidAmount: {
+        type: Number,
+    },
     is_active: {
         type: Boolean,
         default: true
